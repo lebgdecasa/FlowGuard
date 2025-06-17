@@ -12,7 +12,7 @@ FlowGuard analyzes real-world network connection data and classifies each connec
 
 - Source: [Kaggle – Network Malware Detection](https://www.kaggle.com/datasets/agungpambudi/network-malware-detection-connection-analysis/versions/1/data)
 - Over 220,000 connection records
-- Key features: `Duration`, `Ports`, `Protocol`, `Bytes Sent/Received`, `Label` (safe or malicious)
+- Key features: `Duration`, `Ports`, `Protocol`, `Bytes Sent/Received`, `Label` (benign or malicious)
 
 ## 🧠 How It Works
 
