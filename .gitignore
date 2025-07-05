@@ -1,4 +1,4 @@
 raw_data/
 .DS_Store
 models/
-
+*.pyc
