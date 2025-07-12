@@ -23,7 +23,7 @@ st.markdown("Analyze network traffic patterns to detect potential malicious acti
 
 # API configuration
 #TO-DO change once deployed
-API_URL = "https://flowguard-api-final-938724554929.europe-west1.run.app/"
+API_URL = "https://flowguard-api-final-938724554929.europe-west1.run.app"
 
 # Create tabs for single and batch analysis
 tab1, tab2 = st.tabs(["Single Analysis", "Batch Analysis (CSV)"])
