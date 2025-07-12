@@ -4,6 +4,11 @@ import json
 import pandas as pd
 import io
 from datetime import datetime
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Set page configuration
 st.set_page_config(
@@ -17,7 +22,8 @@ st.title("🛡️ FlowGuard Network Traffic Analyzer")
 st.markdown("Analyze network traffic patterns to detect potential malicious activity")
 
 # API configuration
-API_URL = "http://localhost:5001/predict"  # Adjust this to your API endpoint
+#TO-DO change once deployed
+API_URL = "http://localhost:5001/predict"
 
 # Create tabs for single and batch analysis
 tab1, tab2 = st.tabs(["Single Analysis", "Batch Analysis (CSV)"])
@@ -241,22 +247,27 @@ with tab2:
 
                     # Process each row
                     for idx, row in df.iterrows():
+                        logger.info(f"Processing row {idx + 1}/{len(df)}")
                         progress = (idx + 1) / len(df)
                         progress_bar.progress(progress)
                         status_text.text(f"Processing flow {idx + 1} of {len(df)}...")
 
                         try:
+                            logger.info(f"Row {idx}: Preparing data for API")
                             # Prepare data
                             data = {
-                                "proto": int(row['proto']),
-                                "service": int(row['service']),
+                                "proto": str(row['proto']),
+                                "service": str(row['service']),
                                 "duration": float(row['duration']),
                                 "orig_bytes": int(row['orig_bytes']),
                                 "resp_bytes": int(row['resp_bytes'])
                             }
 
                             # Make API request
+                            logger.info(f"Row {idx}: Sending data {data} to API")
                             response = requests.post(API_URL, json=data)
+                            logger.info(f"Row {idx}: Sent data {data} to API")
+                            logger.info(f"Row {idx}: Received response {response.status_code}")
 
                             if response.status_code == 200:
                                 result = response.json()
@@ -271,6 +282,7 @@ with tab2:
                                 errors.append(f"Row {idx}: API error - {response.status_code}")
 
                         except Exception as e:
+                            logger.error(f"Row {idx}: Error processing data - {str(e)}")
                             errors.append(f"Row {idx}: {str(e)}")
 
                     # Clear progress indicators
