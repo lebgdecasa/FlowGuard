@@ -1,0 +1,10 @@
+Flask==2.3.2
+joblib==1.4.2
+pandas==2.3.0
+json
+os
+streamlit==1.44.1
+requests==2.31.0
+logging
+io
+datetime
