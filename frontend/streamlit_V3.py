@@ -23,7 +23,8 @@ st.title("🛡️ FlowGuard Network Traffic Analyzer")
 st.markdown("A comprehensive tool to analyze network traffic for malicious activity, supporting single and batch analysis.")
 
 # --- API CONFIGURATION ---
-# Use the robust API URL retrieval from V2, which checks Streamlit secrets first.
+
+#TO-DO change once deployed
 API_URL = st.secrets.get("FLOWGUARD_API_URL", "http://0.0.0.0:8000/predict")
 
 # --- MALICIOUS PREDICTIONS LIST ---
