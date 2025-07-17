@@ -1,106 +1,120 @@
-from flask import Flask, request, jsonify
-import joblib
+"""
+FlowGuard prediction API
+—————————
+Start with:
+    uvicorn api:app --reload --port 8000
+"""
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
 import pandas as pd
-import json
-import os
+import numpy as np
+import joblib, json, pathlib
+import uvicorn
 
-# --- INITIALIZATION ---
-app = Flask(__name__)
+# ---------------------------------------------------------------------
+# Load artefacts ------------------------------------------------------
+# ---------------------------------------------------------------------
+ASSETS = pathlib.Path(__file__).parent
 
-# --- LOAD MODEL AND PREPROCESSING DATA ---
-# Determine the absolute path to the files
-# This assumes api.py is in the 'backend' directory, and the models are in the parent directory.
-base_dir = os.path.dirname(os.path.abspath(__file__))
-model_path = os.path.join(base_dir, 'flowguard_xgboost_model.pkl')
-preprocessing_path = os.path.join(base_dir, 'flowguard_preprocessing.json')
+with open(ASSETS / "flowguard_preprocessing.json") as fp:
+    CFG = json.load(fp)
 
-try:
-    model = joblib.load(model_path)
-    with open(preprocessing_path, 'r') as f:
-        preprocessing_data = json.load(f)
+ENCODER       = joblib.load(ASSETS / "flowguard_encoder.pkl")
+LBL_ENCODER   = joblib.load(ASSETS / "flowguard_label_encoder.pkl")
+SCALER        = joblib.load(ASSETS / "flowguard_scaler.pkl")
+MODEL         = joblib.load(ASSETS / "flowguard_xgboost_model_final.pkl")
 
-    FEATURES = preprocessing_data['features']
-    PROTO_CATEGORIES = preprocessing_data['proto_categories']
-    SERVICE_CATEGORIES = preprocessing_data['service_categories']
+NUM_FEATURES  = CFG["numerical_features"]                # ['orig_pkts', 'orig_ip_bytes']
+CAT_FEATURES  = CFG["categorical_features"]              # ['proto', 'conn_state', 'history_bucket']
+ORDERED_COLS  = CFG["feature_names_out"]                 # final column order expected by model
 
-    print("Model and preprocessing data loaded successfully.")
+# ---------------------------------------------------------------------
+# History bucketing helper -------------------------------------------
+# ---------------------------------------------------------------------
+PURE_MALICIOUS = {'I', 'DTT'}
+SUSPICIOUS_COMBOS = {
+    'ShAdDaFf', 'ShAdDafF', 'ShADadfF', 'ShADafF',
+    'ShADar', 'ShAdDaFr', 'ShAdDfFr', 'ShAdDaft',
+    'ShADr', 'ShADdfFa'
+}
+PURE_BENIGN = {'D', 'Dd', 'R'}
 
-except FileNotFoundError:
-    print("Error: Model or preprocessing file not found.")
-    print("Please run the training notebook (Test1.ipynb) to generate these files.")
-    model = None
-    FEATURES = None
-    PROTO_CATEGORIES = None
-    SERVICE_CATEGORIES = None
-
-
-# --- PREPROCESSING FUNCTION ---
-def preprocess_input(data):
-    """
-    Preprocesses raw input data for prediction.
-    - Converts input to a DataFrame.
-    - Encodes categorical features.
-    - Ensures feature order.
-    """
-    if not isinstance(data, pd.DataFrame):
-        df = pd.DataFrame(data, index=[0])
-    else:
-        df = data
-
-    # Encode categorical features using the loaded categories
-    df['proto'] = pd.Categorical(df['proto'], categories=PROTO_CATEGORIES).codes
-    df['service'] = pd.Categorical(df['service'], categories=SERVICE_CATEGORIES).codes
-
-    # Ensure all required features are present and in the correct order
-    for col in FEATURES:
-        if col not in df.columns:
-            df[col] = 0 # Or handle missing columns appropriately
-
-    return df[FEATURES]
+def bucket_history(val: str) -> str:
+    """Map raw Zeek history strings → bucket."""
+    if val == 'S':
+        return 'majority_S'
+    if val in PURE_MALICIOUS:
+        return 'pure_malicious'
+    if val in SUSPICIOUS_COMBOS:
+        return 'known_suspicious_combos'
+    if val in PURE_BENIGN:
+        return 'pure_benign'
+    return 'rare_mixed'
 
 
-# --- API ENDPOINTS ---
-@app.route('/predict', methods=['POST'])
-def predict():
-    """
-    Receives data, preprocesses it, makes a prediction, and returns the result.
-    """
-    if model is None:
-        return jsonify({'error': 'Model not loaded. Please check server logs.'}), 500
+# ---------------------------------------------------------------------
+# Pydantic schema -----------------------------------------------------
+# ---------------------------------------------------------------------
+class FlowInput(BaseModel):
+    orig_pkts: int              = Field(..., ge=0, example=5)
+    orig_ip_bytes: int          = Field(..., ge=0, example=400)
+    proto: str                  = Field(..., pattern="^(tcp|udp)$", example="tcp")
+    conn_state: str             = Field(...,
+        pattern="^(OTH|REJ|RSTO|RSTOS0|RSTR|RSTRH|S0|S1|S2|S3|SF|SH|SHR)$",
+        example="SF")
+    history: str                = Field(..., example="S")   # raw Zeek history sequence
 
+# ---------------------------------------------------------------------
+# Pre-processing pipeline --------------------------------------------
+# ---------------------------------------------------------------------
+def preprocess(x: FlowInput) -> np.ndarray:
+    df = pd.DataFrame([x.dict()])
+
+    # transform history → bucket and drop raw column
+    df["history_bucket"] = df["history"].apply(bucket_history)
+    df.drop(columns=["history"], inplace=True)
+
+    # numeric -----------------
+    num_scaled = SCALER.transform(df[NUM_FEATURES])
+
+    # categorical -------------
+    cat_ohe = ENCODER.transform(df[CAT_FEATURES])
+
+    # concatenate -------------
+    X = np.concatenate([num_scaled, cat_ohe], axis=1)
+
+    # ensure column order matches training
+    df_processed = pd.DataFrame(X)
+
+    # The encoder loses the column names, so we rename them here
+    # The order of columns is based on the notebook
+    df_processed.columns = ORDERED_COLS
+    return df_processed.values
+
+
+# ---------------------------------------------------------------------
+# FastAPI app ---------------------------------------------------------
+# ---------------------------------------------------------------------
+app = FastAPI(
+    title="FlowGuard Predictor",
+    description="Predict traffic class from Zeek flow features.",
+    version="1.0.0",
+)
+
+@app.post("/predict")
+def predict(flow: FlowInput):
     try:
-        # Get data from POST request
-        data = request.get_json(force=True)
-
-        # Preprocess the data
-        processed_data = preprocess_input(data)
-
-        # Make prediction
-        prediction = model.predict(processed_data)
-        prediction_proba = model.predict_proba(processed_data)
-
-        # Format response
-        output = {
-            'prediction': int(prediction[0]), # 0 for Benign, 1 for Malicious
-            'confidence': {
-                'benign': float(prediction_proba[0][0]),
-                'malicious': float(prediction_proba[0][1])
-            }
+        X = preprocess(flow)
+        pred_idx = MODEL.predict(X)
+        proba    = MODEL.predict_proba(X).max()
+        label    = LBL_ENCODER.inverse_transform(pred_idx)[0]
+        return {
+            "prediction": label,
+            "confidence": round(float(proba), 4)
         }
+    except Exception as err:
+        raise HTTPException(status_code=400, detail=str(err))
 
-        return jsonify(output)
-
-    except Exception as e:
-        print(f"An error occurred: {e}") # Add logging
-        return jsonify({'error': str(e)}), 400
-
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint to verify service is running."""
-    return jsonify({'status': 'ok', 'model_loaded': model is not None})
-
-
-# --- RUN THE APP ---
-if __name__ == '__main__':
-    # Use 0.0.0.0 to make it accessible from outside the container
-    app.run(host='0.0.0.0', port=5001, debug=True)
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
