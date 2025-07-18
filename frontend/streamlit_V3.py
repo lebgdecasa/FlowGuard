@@ -25,7 +25,7 @@ st.markdown("A comprehensive tool to analyze network traffic for malicious activ
 # --- API CONFIGURATION ---
 
 #TO-DO change once deployed
-API_URL = st.secrets.get("FLOWGUARD_API_URL", "http://0.0.0.0:8000/predict")
+API_URL = st.secrets.get("FLOWGUARD_API_URL", "https://flowguard-api-fv-938724554929.europe-west1.run.app/predict")
 
 # --- MALICIOUS PREDICTIONS LIST ---
 # Define the list of malicious prediction labels at a global scope.

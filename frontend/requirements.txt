@@ -3,3 +3,8 @@ joblib==1.4.2
 pandas==2.3.0
 streamlit==1.44.1
 requests==2.31.0
+fastapi
+uvicorn
+numpy
+xgboost
+scikit-learn
